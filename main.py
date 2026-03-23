@@ -1,95 +1,110 @@
 import sys
 from lexer import parseExpressao
 from executor import executarExpressao
-from assembly import gerarAssembly, salvarAssembly
+from assembly import gerarAssembly
+
 
 # Função responsavel por ler o arquivo de entrada
 def lerArquivo(nomeArquivo):
-
     try:
-        with open(nomeArquivo, "r") as f:
-            linhas = f.readlines()
-        return linhas
-
-    # Tratamento de erro caso o arquivo não exista
+        with open(nomeArquivo, "r") as arquivo:
+            return arquivo.readlines()
     except FileNotFoundError:
-        print(f"Erro: arquivo '{nomeArquivo}' não encontrado.")
+        print(f"Erro: O arquivo '{nomeArquivo}' não foi encontrado.")
         sys.exit(1)
 
-# Salva os tokens da ultima expressão processada
+
+# Salva os tokens gerados pelo lexer em um arquivo
 def salvarTokens(tokens):
-
     try:
-        with open("tokens.txt", "w") as f:
-            for t in tokens:
-                f.write(t + "\n")
-
+        with open("tokens.txt", "w") as arquivo:
+            for token in tokens:
+                arquivo.write(str(token) + "\n")
     except Exception as e:
         print(f"Erro ao salvar tokens: {e}")
 
-# Exibe os resultados finais no terminal
+
+# Salva o codigo assembly gerado em um arquivo
+def salvarAssembly(codigo):
+    try:
+        with open("program.s", "w") as arquivo:
+            if isinstance(codigo, list):
+                arquivo.write("\n".join(codigo) + "\n")
+            else:
+                arquivo.write(str(codigo) + "\n")
+    except Exception as e:
+        print(f"Erro ao salvar assembly: {e}")
+
+
+# Exibe os resultados das expressões executadas
 def exibirResultados(resultados):
+    if not resultados:
+        print("\nNenhuma expressão válida foi executada.")
+        return
 
-    print("\n===== RESULTADOS =====\n")
+    print("\nResultados:")
+    for linha, resultado in resultados:
+        print(f"Linha {linha}: {resultado}")
 
-    for linha, r in resultados:
-        print(f"Linha {linha}: {r:.1f}")
 
-    print("\n======================\n")
-
+# Controla todo o fluxo da aplicação
 def main():
-
-    # Verifica se o usuario passou o arquivo como argumento
     if len(sys.argv) < 2:
-        print("Uso: python main.py arquivoTeste.txt")
+        print("Uso: python main.py teste1.txt")
         sys.exit(1)
 
     nomeArquivo = sys.argv[1]
 
+    # lê todas as linhas do arquivo
     linhas = lerArquivo(nomeArquivo)
 
     resultados = []
     linha_atual = 1
 
-    # Guarda tokens para uso posterior
+    # guarda tokens da ultima execução
     tokensUltimaExecucao = []
-    tokensTodasExpressoes = []
 
-    # Processa cada linha do arquivo
+    # guarda tokens de todas as expressões validas
+    linhas_tokens = []
+
     for linha in linhas:
 
         linha = linha.strip()
 
-        # Ignora linhas vazias
+        # ignora linhas vazias
         if not linha:
+            linha_atual += 1
             continue
 
         try:
-            # Etapa de analise lexica
+            # executa o lexer
             tokens = parseExpressao(linha)
 
-            # Etapa de execução
+            # executa a expressão usando o executor
             resultado = executarExpressao(tokens)
 
             resultados.append((linha_atual, resultado))
 
             tokensUltimaExecucao = tokens
-            tokensTodasExpressoes.extend(tokens)
+            linhas_tokens.append(tokens)
 
         except Exception as e:
             print(f"Erro na linha {linha_atual}: {e}")
 
         linha_atual += 1
 
-    # Salva tokens da ultima expressão
-    salvarTokens(tokensUltimaExecucao)
+    # salva tokens da ultima execução valida
+    if tokensUltimaExecucao:
+        salvarTokens(tokensUltimaExecucao)
 
-    # Gera codigo assembly baseado em todas expressões
-    codigoAssembly = gerarAssembly(tokensTodasExpressoes)
+    # gera assembly se houver expressões validas
+    if linhas_tokens:
 
-    salvarAssembly(codigoAssembly)
+        codigoAssembly = gerarAssembly(linhas_tokens)
 
-    # Exibe resultados finais
+        if codigoAssembly:
+            salvarAssembly(codigoAssembly)
+
     exibirResultados(resultados)
 
 if __name__ == "__main__":
