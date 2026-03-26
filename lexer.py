@@ -1,24 +1,15 @@
-# Constantes
-OPERADORES = {"+", "-", "*", "/", "%", "^"}
-PARENTESES = {"(", ")"}
-
 def estadoNumero(linha, i):
-    """Estado do AFD para reconhecer números reais."""
-    numero = []
+    numero = ""
     tem_ponto = False
     digitos_antes = 0
     digitos_depois = 0
 
-    # suporte a número negativo
-    if linha[i] == "-":
-        numero.append("-")
-        i += 1
-
+    # percorre os caracteres enquanto fizerem parte do numero
     while i < len(linha):
         char = linha[i]
 
         if char.isdigit():
-            numero.append(char)
+            numero += char
             if not tem_ponto:
                 digitos_antes += 1
             else:
@@ -28,133 +19,103 @@ def estadoNumero(linha, i):
 
         if char == ".":
             if tem_ponto:
-                raise ValueError("Erro léxico: número com múltiplos pontos")
+                raise ValueError("Número malformado")
             tem_ponto = True
-            numero.append(char)
+            numero += char
             i += 1
             continue
 
         break
 
-    numero_str = "".join(numero)
-
-    # Validações de malformação
-    if numero_str in {"", "-"}:
-        raise ValueError("Erro léxico: número inválido")
-
+    # valida numeros reais garantindo digitos antes e depois do ponto
     if tem_ponto and (digitos_antes == 0 or digitos_depois == 0):
-        raise ValueError("Erro léxico: número real malformado")
+        raise ValueError("Número real inválido")
 
-    return numero_str, i
+    return numero, i
 
 
 def estadoPalavra(linha, i):
-    """Estado do AFD para reconhecer comandos (RES) e identificadores de memória (MEM, VAR, etc)."""
-    inicio = i
+    palavra = ""
 
     while i < len(linha) and linha[i].isalpha():
+        palavra += linha[i]
         i += 1
-    
-    palavra = linha[inicio:i]
 
+    # verifica se está em maiusculo
     if not palavra.isupper():
-        raise ValueError(f"Erro léxico: palavra deve estar em MAIÚSCULO ({palavra})")
-    
+        raise ValueError(f"Variável/Comando inválido (deve ser maiúsculo): {palavra}")
+
     return palavra, i
 
 
+# Identifica operadores matematicos da linguagem
 def estadoOperador(linha, i):
-    """Estado do AFD para reconhecer operadores simples e compostos (//)."""
-    # operador composto //
-    if linha[i:i+2] == "//":
-        # valida se não vira "///"
-        if i + 2 < len(linha) and linha[i+2] == "/":
-            raise ValueError(f"Erro léxico: operador inválido (///)")
+    char = linha[i]
+
+    if char == "/" and i + 1 < len(linha) and linha[i + 1] == "/":
         return "//", i + 2
 
-    if linha[i] in OPERADORES:
-        return linha[i], i + 1
+    if char in "+-*/%^":
+        return char, i + 1
 
-    raise ValueError(f"Erro léxico: operador inválido ({linha[i]})")
+    raise ValueError(f"Operador inválido: {char}")
 
+
+# Apenas retorna o parentese encontrado e avança a leitura
 def estadoParenteses(linha, i):
-    """Estado do AFD para parênteses."""
     return linha[i], i + 1
 
-def validarEstrutura(tokens):
-    """Realiza validações sintáticas básicas requeridas."""
-    # 1. Balanço de parênteses
+
+def validarParenteses(tokens):
     stack = []
-    for token in tokens:
-        if token == "(":
-            stack.append(token)
-        elif token == ")":
+
+    for t in tokens:
+        if t == "(":
+            stack.append(t)
+        elif t == ")":
             if not stack:
-                raise ValueError("Erro sintático: parênteses desbalanceados")
+                raise ValueError("Parênteses desbalanceados")
             stack.pop()
+
     if stack:
-        raise ValueError("Erro sintático: parênteses desbalanceados")
-    
-    # 2. Posicionamento de operadores (Regras RPN básicas para o Lexer)
-    for i, token in enumerate(tokens):
-        if token in OPERADORES or token == "//":
-            if i == 0 or tokens[i - 1] == "(":
-                raise ValueError(f"Erro sintático: operador mal posicionado ({token})")
-            if i == len(tokens) - 1 and token != tokens[-2]: # Checa se não é o fecha parênteses vindo
-                 pass # A lógica RPN (A B op) exige op antes do ')'
+        raise ValueError("Parênteses desbalanceados")
 
-def validarTokens(tokens):
-    for i, token in enumerate(tokens):
 
-        # operador mal posicionado
-        if token in OPERADORES:
-            if i == 0 or tokens[i - 1] == "(":
-                raise ValueError(f"Erro sintático: operador mal posicionado ({token})")
 
-            if i == len(tokens) - 1:
-                raise ValueError(f"Erro sintático: operador no final ({token})")
-
-            if tokens[i + 1] in OPERADORES:
-                raise ValueError("Erro sintático: operadores consecutivos")
-
+# Função principal do lexer
 def parseExpressao(linha):
-    """Função principal"""
     tokens = []
     i = 0
 
     while i < len(linha):
         char = linha[i]
 
-        # ignorar espaços
         if char.isspace():
             i += 1
             continue
 
-        # parênteses
-        if char in PARENTESES:
+        if char in "()":
             token, i = estadoParenteses(linha, i)
+            tokens.append(token)
+            continue
 
-        # número (inclui negativo)
-        elif char.isdigit() or (
-            char == "-" and 
-            i + 1 < len(linha) and 
-            linha[i + 1].isdigit()
-        ):
+        if char.isdigit():
             token, i = estadoNumero(linha, i)
+            tokens.append(token)
+            continue
 
-        # palavras (RES, MEM)
-        elif char.isalpha():
+        if char.isalpha():
             token, i = estadoPalavra(linha, i)
+            tokens.append(token)
+            continue
 
-        # operadores
-        elif char in OPERADORES or char == "/":
+        if char in "+-*/%^":
             token, i = estadoOperador(linha, i)
+            tokens.append(token)
+            continue
 
-        else:
-            raise ValueError(f"Erro léxico: caractere inválido ({char})")
+        raise ValueError(f"Caractere inválido: {char}")
 
-        tokens.append(token)
-
-    validarEstrutura(tokens)
+    validarParenteses(tokens)
 
     return tokens
