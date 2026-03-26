@@ -5,14 +5,14 @@ def isNumero(token):
     except ValueError:
         return False
 
+
+# função responsável por gerar o codigo assembly
 def gerarAssembly(linhas_tokens):
 
     assembly_data = []
     assembly_text = []
     constants = []
 
-
-    # seção de dados onde ficam variaveis e historico
     assembly_data.append(".data")
     assembly_data.append("    .align 3")
 
@@ -20,7 +20,7 @@ def gerarAssembly(linhas_tokens):
 
     variaveis = set()
 
-    # coleta todas as variaveis usadas nas expressões
+    # percorre todos os tokens para identificar variáveis usadas no programa
     for tokens in linhas_tokens:
         for t in tokens:
             if t.isalpha() and t != "RES":
@@ -29,17 +29,17 @@ def gerarAssembly(linhas_tokens):
     for v in sorted(variaveis):
         assembly_data.append(f"var_{v}: .double 0.0")
 
-    # inicio da seção de código
+    # inicio da seção de codigo executavel
     assembly_text.append(".text")
     assembly_text.append(".global _start")
     assembly_text.append("_start:")
 
     label_id = 0
 
-    # percorre cada expressão do arquivo
+    # percorre cada linha de expressão
     for linha_idx, tokens in enumerate(linhas_tokens):
 
-        # pilha usada para controlar registradores
+        # pilha usada para controlar registradores durante os calculos
         stack = []
 
         for i, token in enumerate(tokens):
@@ -56,13 +56,14 @@ def gerarAssembly(linhas_tokens):
                 assembly_text.append(f"    LDR R0, =const_{label_id}")
                 assembly_text.append(f"    VLDR.F64 {reg}, [R0]")
 
-                # salva constante na seção de dados
+                # adiciona constante na seção de dados
                 constants.append(f"const_{label_id}: .double {float(token)}")
 
                 stack.append(reg)
                 label_id += 1
                 continue
 
+            # operações basicas de ponto flutuante
             if token in ("+", "-", "*", "/"):
 
                 if len(stack) < 2:
@@ -86,7 +87,7 @@ def gerarAssembly(linhas_tokens):
                 stack.append(r1)
                 continue
 
-
+            # essas operações são feitas convertendo float para inteiro
             if token in ("//", "%"):
 
                 if len(stack) < 2:
@@ -95,43 +96,61 @@ def gerarAssembly(linhas_tokens):
                 r2 = stack.pop()
                 r1 = stack.pop()
 
-                # converte valores de float para inteiro
                 assembly_text.append(f"    VCVT.S32.F64 S30, {r1}")
-                assembly_text.append("    VMOV R1, S30")
+                assembly_text.append("    VMOV R0, S30")
 
                 assembly_text.append(f"    VCVT.S32.F64 S31, {r2}")
-                assembly_text.append("    VMOV R2, S31")
+                assembly_text.append("    VMOV R1, S31")
 
-                assembly_text.append("    SDIV R3, R1, R2")
 
-                if token == "%":
-                    assembly_text.append("    MUL R3, R3, R2")
-                    assembly_text.append("    SUB R3, R1, R3")
+                assembly_text.append("    MOV R2, #0")   
+                assembly_text.append("    MOV R3, R0") 
 
-                assembly_text.append("    VMOV S30, R3")
+                loop = f"div_loop_{label_id}"
+                end = f"div_end_{label_id}"
+
+                label_id += 1
+
+                # algoritmo de divisão usando subtrações sucessivas
+                assembly_text.append(f"{loop}:")
+                assembly_text.append("    CMP R3, R1")
+                assembly_text.append(f"    BLT {end}")
+                assembly_text.append("    SUB R3, R3, R1")
+                assembly_text.append("    ADD R2, R2, #1")
+                assembly_text.append(f"    B {loop}")
+
+                assembly_text.append(f"{end}:")
+
+                if token == "//":
+                    assembly_text.append("    MOV R4, R2")
+                else:
+                    assembly_text.append("    MOV R4, R3")
+
+                # converte resultado de volta para float
+                assembly_text.append("    VMOV S30, R4")
                 assembly_text.append(f"    VCVT.F64.S32 {r1}, S30")
 
                 stack.append(r1)
                 continue
 
-            # implementada utilizando um loop em assembly
+            # implementada utilizando multiplicação repetida
             if token == "^":
 
                 if len(stack) < 2:
                     continue
 
-                r2 = stack.pop()  
-                r1 = stack.pop()  
+                r2 = stack.pop()  # expoente
+                r1 = stack.pop()  # base
 
                 start = f"pow_loop_{label_id}"
                 end = f"pow_end_{label_id}"
 
                 label_id += 1
 
-                # converte expoente para inteiro
                 assembly_text.append(f"    VCVT.S32.F64 S31, {r2}")
                 assembly_text.append("    VMOV R2, S31")
 
+                # acumulador inicial = 1
                 assembly_text.append("    VMOV.F64 D30, #1.0")
 
                 assembly_text.append(f"{start}:")
@@ -144,12 +163,12 @@ def gerarAssembly(linhas_tokens):
 
                 assembly_text.append(f"{end}:")
 
-                # resultado final
                 assembly_text.append(f"    VMOV.F64 {r1}, D30")
 
                 stack.append(r1)
                 continue
 
+            # permite acessar resultados de linhas anteriores
             if token == "RES":
 
                 if not stack:
@@ -174,9 +193,9 @@ def gerarAssembly(linhas_tokens):
                 stack.append(r_n)
                 continue
 
+            # pode ser leitura ou escrita dependendo da posição
             if token.isalpha():
 
-                # verifica se esta lendo ou escrevendo na variavel
                 is_read = (i > 0 and tokens[i - 1] == "(")
 
                 if is_read:
@@ -210,16 +229,19 @@ def gerarAssembly(linhas_tokens):
             assembly_text.append("    ADD R0, R0, R1")
             assembly_text.append(f"    VSTR.F64 {final_reg}, [R0]")
 
-            # garante que resultado final esteja em D0
             if final_reg != "D0":
                 assembly_text.append(f"    VMOV.F64 D0, {final_reg}")
 
+
+    # envia resultado final para o endereço de saida do CPULATOR
     assembly_text.append("")
+
     assembly_text.append("    VCVT.S32.F64 S31, D0")
     assembly_text.append("    VMOV R1, S31")
     assembly_text.append("    LDR R0, =0xFF200000")
     assembly_text.append("    STR R1, [R0]")
     assembly_text.append("    B .")
+
 
     # adiciona todas as constantes usadas no programa
     for const in constants:
@@ -228,7 +250,7 @@ def gerarAssembly(linhas_tokens):
     return assembly_data + [""] + assembly_text
 
 
-# função responsavel por salvar o codigo assembly em arquivo
+# função responsavel por salvar o codigo assembly gerado em arquivo
 def salvarAssembly(codigo):
 
     try:
