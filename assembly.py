@@ -1,60 +1,245 @@
-def isNumero(token):
-    try:
-        float(token)
-        return True
-    except ValueError:
-        return False
+"""
+Gerador de Assembly ARMv7 (CPULATOR) com suporte a IEEE754 64 bits
 
-def gerarAssembly(linhas_tokens):
+Integrantes (ordem alfabética):
+Murilo Chandelier Pedrazzani - https://github.com/MuriloPedrazzani
+Ricardo Ryu Magalhães Makino - https://github.com/ryumakino
+Ricardo Vinicius Moreira Vianna - https://github.com/ricaprof
 
-    assembly_data = []
+Grupo no Canvas: RA1 8
+Disciplina: Construção de Interpretadores
+Professor: Frank Alcantara
 
-    assembly_text = []
+"""
 
-    constants = []
-
-    const_map = {
-        repr(0.0): "const_zero",
-        repr(1.0): "const_one"
-    }
-
-    # palavras reservadas da linguagem
-    palavras_reservadas = {"RES", "True", "False", "None"}
-
-    assembly_data.append(".data")
-    assembly_data.append("    .align 3")
-
-    tamanho_historico = len(linhas_tokens) * 8
-
-    if tamanho_historico == 0:
-        tamanho_historico = 8
-
-    assembly_data.append(f"historico: .space {tamanho_historico}")
-
-    assembly_data.append("const_zero: .double 0.0")
-    assembly_data.append("const_one: .double 1.0")
+def extrair_variaveis(tokens_por_linha):
 
     variaveis = set()
-    for tokens in linhas_tokens:
-        for t in tokens:
-            if t.isidentifier() and t not in palavras_reservadas:
-                variaveis.add(t)
 
-    # cria espaço para cada variavel na memória
-    for v in sorted(variaveis):
-        assembly_data.append(f"var_{v}: .double 0.0")
+    for tokens in tokens_por_linha:
+        for token in tokens:
+            if isVariavel(token): 
+                variaveis.add(token)
 
-    assembly_text.append(".text")
-    assembly_text.append(".global _start")
-    assembly_text.append("_start:")
+    return variaveis
 
-    label_id = 0
+def construir_pool_constantes(tokens_por_linha):
 
-    for linha_idx, tokens in enumerate(linhas_tokens):
+    constantes = {"0.0": "const_zero", "1.0": "const_one"}
+    
+    for tokens in tokens_por_linha:
+        for token in tokens:
 
-        # contador de elementos na pilha
-        stack_count = 0 
+            if isNumero(token):
 
+                val_f = float(token)
+
+                # Verifica se a constante já existe no pool
+                existe = False
+                for k in constantes.keys():
+                    if float(k) == val_f:
+                        existe = True
+                        break
+
+                if not existe:
+                    label = f"const_{len(constantes)}"
+                    constantes[str(val_f)] = label
+                    
+    return constantes
+
+
+def get_label_constante(token, constantes):
+
+    val_f = float(token)
+
+    for k, v in constantes.items():
+        if float(k) == val_f: 
+            return v
+
+    return None
+
+def gerar_data_section(variaveis, constantes):
+
+    asm = []
+
+    asm.append(".data")
+    asm.append("    .align 3")
+
+    asm.append("RES: .space 8000")
+
+    asm.append("RES_size: .word 0")
+
+    asm.append("    .align 2")
+    asm.append("display_lut: .word 0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F, 0x77, 0x7C, 0x39, 0x5E, 0x79, 0x71")
+    
+    asm.append("    .align 3")  
+    
+    # Inserção das constantes no pool
+    for k, v in constantes.items():
+        asm.append(f"    {v}: .double {k}")
+
+    for var in variaveis:
+        asm.append(f"    var_{var}: .double 0.0")
+        
+    return asm
+
+
+def gerar_comando_res():
+
+    asm = []
+
+    asm.append("    VPOP {D0}")
+    asm.append("    VCVT.S32.F64 S0, D0")
+    asm.append("    VMOV R1, S0")
+
+    # Verifica se o índice é negativo
+    asm.append("    CMP R1, #0")
+    asm.append("    BLT throw_error")
+
+    # Carrega tamanho atual do array
+    asm.append("    LDR R2, =RES_size")
+    asm.append("    LDR R2, [R2]")
+
+    # Verifica se indice é maior que tamanho
+    asm.append("    CMP R1, R2")
+    asm.append("    BGE throw_error")
+
+    # Ajuste para acessar posição correta
+    asm.append("    SUB R1, R2, R1")
+    asm.append("    SUB R1, R1, #1")
+
+    asm.append("    LDR R0, =RES")
+    asm.append("    ADD R0, R0, R1, LSL #3")
+
+    asm.append("    VLDR.F64 D0, [R0]")
+    asm.append("    VPUSH {D0}")
+
+    return asm
+
+
+def gerar_operacao_matematica(token, op_id):
+
+    asm = []
+
+    # Remove operandos da pilha
+    asm.append("    VPOP {D1}")
+    asm.append("    VPOP {D0}")
+
+    if token == "+":
+        asm.append("    VADD.F64 D0, D0, D1")
+        
+    elif token == "-":
+        asm.append("    VSUB.F64 D0, D0, D1")
+        
+    elif token == "*":
+        asm.append("    VMUL.F64 D0, D0, D1")
+        
+    elif token == "/":
+
+        # Proteção contra divisão por zero
+        asm.append("    LDR R4, =const_zero")
+        asm.append("    VLDR.F64 D2, [R4]")
+        asm.append("    VCMP.F64 D1, D2")
+        asm.append("    VMRS APSR_nzcv, FPSCR")
+        asm.append("    BEQ throw_error")
+
+        asm.append("    VDIV.F64 D0, D0, D1")
+        
+    elif token == "//":
+
+        asm.append("    LDR R4, =const_zero")
+        asm.append("    VLDR.F64 D2, [R4]")
+        asm.append("    VCMP.F64 D1, D2")
+        asm.append("    VMRS APSR_nzcv, FPSCR")
+        asm.append("    BEQ throw_error")
+
+        asm.append("    VDIV.F64 D0, D0, D1")
+        asm.append("    VCVT.S32.F64 S0, D0")
+        asm.append("    VCVT.F64.S32 D0, S0")
+        
+    elif token == "%":
+
+        asm.append("    LDR R4, =const_zero")
+        asm.append("    VLDR.F64 D2, [R4]")
+        asm.append("    VCMP.F64 D1, D2")
+        asm.append("    VMRS APSR_nzcv, FPSCR")
+        asm.append("    BEQ throw_error")
+
+        asm.append("    VDIV.F64 D2, D0, D1")
+        asm.append("    VCVT.S32.F64 S4, D2")
+        asm.append("    VCVT.F64.S32 D2, S4")
+        asm.append("    VMUL.F64 D2, D2, D1")
+        asm.append("    VSUB.F64 D0, D0, D2")
+        
+    elif token == "^":
+
+        asm.append("    VCVT.S32.F64 S2, D1")
+        asm.append("    VMOV R3, S2")
+
+        asm.append("    CMP R3, #0")
+        asm.append("    BLT throw_error")
+
+        asm.append("    LDR R4, =const_one")
+        asm.append("    VLDR.F64 D2, [R4]")
+        
+        asm.append(f"pow_loop_{op_id}:")
+        asm.append("    CMP R3, #0")
+        asm.append(f"    BEQ pow_end_{op_id}")
+        asm.append("    VMUL.F64 D2, D2, D0")
+        asm.append("    SUB R3, R3, #1")
+        asm.append(f"    B pow_loop_{op_id}")
+        
+        asm.append(f"pow_end_{op_id}:")
+        asm.append("    VMOV.F64 D0, D2")
+
+    asm.append("    VPUSH {D0}")
+
+    return asm
+
+def gerar_salvamento_linha(line_id):
+
+    asm = []
+
+    asm.append("    VPOP {D0}")
+
+    asm.append(f"save_res_step_{line_id}:")
+
+    asm.append("    LDR R0, =RES_size")
+    asm.append("    LDR R1, [R0]")
+
+    # Evita overflow do array
+    asm.append("    CMP R1, #1000")
+    asm.append("    BGE throw_error")
+
+    asm.append("    LDR R2, =RES")
+    asm.append("    ADD R2, R2, R1, LSL #3") 
+
+    asm.append("    VSTR.F64 D0, [R2]")
+
+    asm.append("    ADD R1, R1, #1")
+    asm.append("    STR R1, [R0]")
+
+    return asm
+
+def gerar_text_section(tokens_por_linha, constantes):
+
+    asm = []
+
+    asm.append("\n.text")
+    asm.append(".global _start")
+    asm.append("_start:")
+
+    line_id = 0
+    op_id = 0
+
+    for tokens in tokens_por_linha:
+ 
+        # Caso linha tenha erro (tokens vazios)
+        if not tokens:
+            asm.append("    LDR R0, =const_zero")
+            asm.append("    VLDR.F64 D0, [R0]")
+            asm.append("    VPUSH {D0}")
+            
         for i, token in enumerate(tokens):
 
             if token in ("(", ")"):
@@ -62,261 +247,136 @@ def gerarAssembly(linhas_tokens):
 
             if isNumero(token):
 
-                val_float = float(token)
-                val_str = repr(val_float)
+                label = get_label_constante(token, constantes)
 
-                # adiciona constante ao pool caso ainda não exista
-                if val_str not in const_map:
-                    const_name = f"const_{len(const_map)}"
-                    const_map[val_str] = const_name
-                    constants.append(f"{const_name}: .double {val_float}")
+                asm.append(f"    LDR R0, ={label}")
+                asm.append("    VLDR.F64 D0, [R0]")
+                asm.append("    VPUSH {D0}")
+
+                continue
+
+            if isVariavel(token):
+
+                # Leitura de variavel
+                if i > 0 and tokens[i - 1] == "(" and i + 1 < len(tokens) and tokens[i + 1] == ")":
+
+                    asm.append(f"    LDR R0, =var_{token}")
+                    asm.append("    VLDR.F64 D0, [R0]")
+                    asm.append("    VPUSH {D0}")
+
+                # Escrita em variavel
                 else:
-                    const_name = const_map[val_str]
 
-                # carrega constante para registrador
-                assembly_text.append(f"    LDR R0, ={const_name}")
-                assembly_text.append("    VLDR.F64 D0, [R0]")
-                assembly_text.append("    VPUSH {D0}")
+                    asm.append("    VPOP {D0}")
+                    asm.append(f"    LDR R0, =var_{token}")
+                    asm.append("    VSTR.F64 D0, [R0]")
+                    asm.append("    VPUSH {D0}")
 
-                stack_count += 1
                 continue
-
-            if token in ("+", "-", "*", "/"):
-
-                # verifica se existem operandos suficientes
-                if stack_count < 2:
-                    raise ValueError(
-                        f"Stack underflow no token '{token}' na linha {linha_idx}"
-                    )
-
-                assembly_text.append("    VPOP {D1}")
-                assembly_text.append("    VPOP {D0}")
-                stack_count -= 2
-
-                if token == "+":
-                    assembly_text.append("    VADD.F64 D0, D0, D1")
-
-                elif token == "-":
-                    assembly_text.append("    VSUB.F64 D0, D0, D1")
-
-                elif token == "*":
-                    assembly_text.append("    VMUL.F64 D0, D0, D1")
-
-                elif token == "/":
-                    assembly_text.append("    LDR R0, =const_zero")
-                    assembly_text.append("    VLDR.F64 D2, [R0]")
-                    assembly_text.append("    VCMP.F64 D1, D2")
-                    assembly_text.append("    VMRS APSR_nzcv, FPSCR")
-                    assembly_text.append("    BEQ throw_error")
-                    assembly_text.append("    VDIV.F64 D0, D0, D1")
-
-                # empilha resultado
-                assembly_text.append("    VPUSH {D0}")
-                stack_count += 1
-                continue
-
-
-            # implementação manual usando loop de subtração
-            if token in ("//", "%"):
-
-                if stack_count < 2:
-                    raise ValueError(
-                        f"Stack underflow no token '{token}' na linha {linha_idx}"
-                    )
-
-                assembly_text.append("    VPOP {D1}")
-                assembly_text.append("    VPOP {D0}")
-                stack_count -= 2
-
-                # conversão para inteiro
-                assembly_text.append("    VCVT.S32.F64 S30, D0")
-                assembly_text.append("    VMOV R0, S30")
-                assembly_text.append("    VCVT.S32.F64 S31, D1")
-                assembly_text.append("    VMOV R1, S31")
-
-                # codigo de divisão usando loop
-                assembly_text.append("    MOV R2, #0")
-                assembly_text.append("    MOV R3, R0")
-
-                loop = f"div_loop_{label_id}"
-                end = f"div_end_{label_id}"
-                label_id += 1
-
-                assembly_text.append(f"{loop}:")
-                assembly_text.append("    CMP R3, R1")
-                assembly_text.append(f"    BLT {end}")
-                assembly_text.append("    SUB R3, R3, R1")
-                assembly_text.append("    ADD R2, R2, #1")
-                assembly_text.append(f"    B {loop}")
-                assembly_text.append(f"{end}:")
-
-                # escolhe quociente ou resto
-                if token == "//":
-                    assembly_text.append("    MOV R4, R2")
-                else:
-                    assembly_text.append("    MOV R4, R3")
-
-                # converte novamente para float
-                assembly_text.append("    VMOV S30, R4")
-                assembly_text.append("    VCVT.F64.S32 D0, S30")
-                assembly_text.append("    VPUSH {D0}")
-
-                stack_count += 1
-                continue
-
-            if token == "^":
-
-                if stack_count < 2:
-                    raise ValueError(
-                        f"Stack underflow no token '{token}' na linha {linha_idx}"
-                    )
-
-                assembly_text.append("    VPOP {D1}")
-                assembly_text.append("    VPOP {D0}")
-                stack_count -= 2
-
-                start = f"pow_loop_{label_id}"
-                end = f"pow_end_{label_id}"
-                label_id += 1
-
-                assembly_text.append("    VMOV.F64 D30, D0")
-
-                assembly_text.append(f"{start}:")
-                assembly_text.append("    CMP R2, #0")
-                assembly_text.append(f"    BEQ {end}")
-                assembly_text.append("    VMUL.F64 D30, D30, D0")
-                assembly_text.append("    SUB R2, R2, #1")
-                assembly_text.append(f"    B {start}")
-
-                assembly_text.append(f"{end}:")
-                assembly_text.append("    VMOV.F64 D0, D30")
-                assembly_text.append("    VPUSH {D0}")
-
-                stack_count += 1
-                continue
-
 
             if token == "RES":
 
-                if stack_count < 1:
-                    raise ValueError(
-                        f"Stack underflow: falta operando N para RES na linha {linha_idx}"
-                    )
-
-                assembly_text.append("    VPOP {D0}")
-                stack_count -= 1
-
-                assembly_text.append("    VCVT.S32.F64 S31, D0")
-                assembly_text.append("    VMOV R1, S31")
-
-                assembly_text.append(f"    LDR R2, ={linha_idx}")
-                assembly_text.append("    SUB R2, R2, R1")
-                assembly_text.append("    SUB R2, R2, #1")
-
-                assembly_text.append("    MOV R3, #8")
-                assembly_text.append("    MUL R2, R2, R3")
-
-                assembly_text.append("    LDR R4, =historico")
-                assembly_text.append("    ADD R4, R4, R2")
-
-                assembly_text.append("    VLDR.F64 D0, [R4]")
-                assembly_text.append("    VPUSH {D0}")
-
-                stack_count += 1
+                asm.extend(gerar_comando_res())
                 continue
 
-            if token.isidentifier() and token not in palavras_reservadas:
+            if token in OPERADORES:
 
-                # verifica se é leitura ou escrita
-                is_read = (i > 0 and tokens[i - 1] == "(")
+                asm.extend(gerar_operacao_matematica(token, op_id))
 
-                if is_read:
-
-                    assembly_text.append(f"    LDR R0, =var_{token}")
-                    assembly_text.append("    VLDR.F64 D0, [R0]")
-                    assembly_text.append("    VPUSH {D0}")
-                    stack_count += 1
-
-                else:
-
-                    if stack_count < 1:
-                        raise ValueError(
-                            f"Stack underflow ao salvar variável '{token}'"
-                        )
-
-                    assembly_text.append("    VPOP {D0}")
-                    stack_count -= 1
-
-                    assembly_text.append(f"    LDR R0, =var_{token}")
-                    assembly_text.append("    VSTR.F64 D0, [R0]")
-
-                    assembly_text.append("    VPUSH {D0}")
-                    stack_count += 1
+                if token == "^":
+                    op_id += 1 
 
                 continue
 
-            # proteção contra tokens invalidos
-            raise ValueError(
-                f"Token sintatico invalido ou desconhecido: '{token}'"
-            )
+        asm.extend(gerar_salvamento_linha(line_id))
+        line_id += 1
+
+    return asm
+
+def gerar_finalizacao():
+
+    asm = []
+
+    asm.append("    VCVT.S32.F64 S0, D0")     
+    asm.append("    VMOV R1, S0")             
+    
+    asm.append("    LDR R2, =0xFF200020")     
+    asm.append("    LDR R3, =display_lut")    
+    asm.append("    MOV R4, #0")              
+    
+    # Conversão para cada digito hexadecimal
+
+    asm.append("    AND R6, R1, #0xF")        
+    asm.append("    LDR R7, [R3, R6, LSL #2]")
+    asm.append("    ORR R4, R4, R7")        
+
+    asm.append("    LSR R1, R1, #4")         
+    asm.append("    AND R6, R1, #0xF")
+    asm.append("    LDR R7, [R3, R6, LSL #2]")
+    asm.append("    LSL R7, R7, #8")         
+    asm.append("    ORR R4, R4, R7")
+
+    asm.append("    LSR R1, R1, #4")          
+    asm.append("    AND R6, R1, #0xF")
+    asm.append("    LDR R7, [R3, R6, LSL #2]")
+    asm.append("    LSL R7, R7, #16")         
+    asm.append("    ORR R4, R4, R7")
+
+    asm.append("    LSR R1, R1, #4")          
+    asm.append("    AND R6, R1, #0xF")
+    asm.append("    LDR R7, [R3, R6, LSL #2]")
+    asm.append("    LSL R7, R7, #24")         
+    asm.append("    ORR R4, R4, R7")
+
+    asm.append("    STR R4, [R2]")            
+
+    asm.append("    B fim")
+
+    # Tratamento de erro
+    asm.append("throw_error:")
+    asm.append("    LDR R0, =0xFF200000")     
+    asm.append("    LDR R1, =0x3FF")        
+    asm.append("    STR R1, [R0]")
+    asm.append("    B .")
+    
+    asm.append("fim:")
+    asm.append("    NOP")
+    asm.append("    B .")
+    
+    return asm
+
+def gerarAssembly(tokens_por_linha):
+
+    variaveis = extrair_variaveis(tokens_por_linha)
+    constantes = construir_pool_constantes(tokens_por_linha)
+
+    asm = []
+
+    asm.extend(gerar_data_section(variaveis, constantes))
+    asm.extend(gerar_text_section(tokens_por_linha, constantes))
+    asm.extend(gerar_finalizacao())
+    
+    return "\n".join(asm)
 
 
-        if stack_count > 1:
-            raise ValueError(
-                f"Erro de sintaxe: múltiplos valores na pilha na linha {linha_idx}"
-            )
+def salvarAssembly(codigo, nome_arquivo="program.s"):
 
-        elif stack_count == 1:
-
-            assembly_text.append("    VPOP {D0}")
-            stack_count -= 1
-
-            assembly_text.append("    LDR R0, =historico")
-            assembly_text.append(f"    LDR R1, ={linha_idx * 8}")
-            assembly_text.append("    ADD R0, R0, R1")
-            assembly_text.append("    VSTR.F64 D0, [R0]")
+    with open(nome_arquivo, "w", encoding="utf-8") as f:
+        f.write(codigo)
 
 
-    assembly_text.append("")
-    ultima_linha_idx = max(0, len(linhas_tokens) - 1) * 8
-
-    assembly_text.append("    LDR R0, =historico")
-    assembly_text.append(f"    LDR R1, ={ultima_linha_idx}")
-    assembly_text.append("    ADD R0, R0, R1")
-    assembly_text.append("    VLDR.F64 D0, [R0]")
-
-    assembly_text.append("    VCVT.S32.F64 S31, D0")
-    assembly_text.append("    VMOV R1, S31")
-
-    # envia resultado para display do simulador
-    assembly_text.append("    LDR R0, =0xFF200000")
-    assembly_text.append("    STR R1, [R0]")
+OPERADORES = {"+", "-", "*", "/", "//", "%", "^"}
 
 
-    assembly_text.append("    B .")
+def isNumero(token):
+
+    try: 
+        float(token)
+        return True
+    except ValueError: 
+        return False
 
 
-    assembly_text.append("")
-    assembly_text.append("throw_error:")
-    assembly_text.append("    LDR R0, =0xFF200000")
-    assembly_text.append("    LDR R1, =0xEEEEEEEE")
-    assembly_text.append("    STR R1, [R0]")
-    assembly_text.append("    B .")
+def isVariavel(token):
 
-
-    # adiciona constantes extras na seção .data
-    for const in constants:
-        assembly_data.append("    " + const)
-
-    return assembly_data + [""] + assembly_text
-
-def salvarAssembly(codigo):
-    try:
-        with open("program.s", "w") as f:
-            for linha in codigo:
-                f.write(linha + "\n")
-
-        print("Assembly gerado com sucesso em 'program.s'")
-
-    except Exception as e:
-        print(f"Erro ao salvar assembly: {e}")
+    return token.isalpha() and token.isupper() and token != "RES"
