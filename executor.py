@@ -1,23 +1,56 @@
-import math
-
-memoria = {}
-
-historico = []
-
-
 def isNumero(token):
+
     try:
         float(token)
         return True
     except ValueError:
         return False
 
-def executarExpressao(tokens):
+def aplicar_operacao(op, a, b):
 
-    # pilha usada para armazenar operandos durante a execução
+    if op == "+":
+        return a + b
+
+    elif op == "-":
+        return a - b
+
+    elif op == "*":
+        return a * b
+
+    elif op == "/":
+
+        if b == 0:
+            raise ZeroDivisionError("Divisão por zero")
+        return a / b
+
+    elif op == "//":
+
+        if b == 0:
+            raise ZeroDivisionError("Divisão inteira por zero")
+        return a // b
+
+    elif op == "%":
+
+        if b == 0:
+            raise ZeroDivisionError("Módulo por zero")
+        return a % b
+
+    elif op == "^":
+
+        if not float(b).is_integer() or b < 0:
+            raise ValueError("O expoente da potenciação deve ser um inteiro positivo")
+
+        return a ** int(b)
+
+    else:
+
+        raise ValueError(f"Operador inválido: {op}")
+
+def executarExpressao(tokens, historico, memoria):
+
     stack = []
 
-    # percorre todos os tokens da expressão
+    # Percorre todos os tokens da expressão
     for i, token in enumerate(tokens):
 
         if token in ("(", ")"):
@@ -25,107 +58,58 @@ def executarExpressao(tokens):
 
         if isNumero(token):
             stack.append(float(token))
-            continue
 
-        if token in ("+", "-", "*", "/", "//", "%", "^"):
+        # Qualquer palavra maiuscula (exceto RES) é considerada variavel
+        elif isinstance(token, str) and token.isalpha() and token != "RES":
 
-            # verifica se existem operandos suficientes na pilha
+            if i > 0 and tokens[i - 1] == "(":
+
+                valor = memoria.get(token, 0.0)
+                stack.append(valor)
+
+            else:
+                if not stack:
+                    raise ValueError("Sem valor na pilha para armazenar na memória")
+
+                valor = stack.pop()
+                memoria[token] = valor
+                stack.append(valor)
+
+        elif token == "RES":
+
+            # Precisa existir um valor na pilha indicando quantas linhas voltar
+            if not stack:
+                raise ValueError("RES sem valor de N na pilha")
+
+            valor_n = stack.pop()
+
+            # Valida se o valor é inteiro não negativo
+            if not float(valor_n).is_integer() or valor_n < 0:
+                raise ValueError("RES exige inteiro não negativo")
+
+            n = int(valor_n)
+
+            # Verifica se existe historico suficiente
+            if n >= len(historico):
+                raise ValueError(f"Linha de histórico inacessível para {n} RES")
+
+            resultado_historico = historico[-(n + 1)]
+            stack.append(resultado_historico)
+
+        else:
+
+            # Operações matematicas exigem dois operandos
             if len(stack) < 2:
-                raise ValueError("Erro: operandos insuficientes")
+                raise ValueError(f"Operandos insuficientes para operador '{token}'")
 
             b = stack.pop()
             a = stack.pop()
 
-            # executa a operação correspondente
-            if token == "+":
-                resultado = a + b
-
-            elif token == "-":
-                resultado = a - b
-
-            elif token == "*":
-                resultado = a * b
-
-            elif token == "/":
-                if b == 0:
-                    raise ValueError("Erro: divisão por zero")
-                resultado = a / b
-
-            elif token == "//":
-                if b == 0:
-                    raise ValueError("Erro: divisão inteira por zero")
-                resultado = int(a) // int(b)
-
-            elif token == "%":
-                if b == 0:
-                    raise ValueError("Erro: resto de divisão por zero")
-                resultado = int(a) % int(b)
-
-            elif token == "^":
-                expoente = int(b)
-                if expoente < 0:
-                    raise ValueError("Erro: expoente negativo")
-                resultado = a ** expoente
-
-            # coloca o resultado da operação de volta na pilha
+            # Executa a operação e empilha o resultado
+            resultado = aplicar_operacao(token, a, b)
             stack.append(resultado)
-            continue
-
-        # permite acessar resultados anteriores do historico
-        if token == "RES":
-
-            if len(stack) < 1:
-                raise ValueError("Erro: RES sem argumento")
-
-            valor = stack.pop()
-
-            if not float(valor).is_integer():
-                raise ValueError("Erro: argumento de RES deve ser inteiro")
-
-            n = int(valor)
-
-            # valida se o indice existe no histórico
-            if n <= 0 or n > len(historico):
-                raise ValueError(f"Erro: índice inválido para RES ({n})")
-
-            # pega o resultado correspondente no histórico
-            stack.append(historico[-n])
-            continue
-
-
-        if token.isalpha():
-
-            is_read = (i > 0 and tokens[i - 1] == "(")
-
-            if is_read:
-                stack.append(memoria.get(token, 0.0))
-            else:
-
-                if len(stack) == 0:
-                    raise ValueError(f"Erro: memória vazia para '{token}'")
-
-                val = stack.pop()
-                memoria[token] = val
-                stack.append(val)
-
-            continue
-
-        raise ValueError(f"Token inválido: {token}")
-
 
     if len(stack) != 1:
-        raise ValueError("Erro: expressão malformada")
+        raise ValueError("Expressão mal formada (sobraram valores na pilha)")
 
-    resultado = stack.pop()
-
-    if not isinstance(resultado, float):
-        resultado = float(resultado)
-
-    # verifica resultados numericos invalidos
-    if math.isnan(resultado) or math.isinf(resultado):
-        raise ValueError("Erro: resultado numérico inválido")
-
-    # salva resultado no historico
-    historico.append(resultado)
-
-    return resultado
+    return stack[0]

@@ -1,121 +1,179 @@
+"""
+Gerador de Assembly ARMv7 (CPULATOR) com suporte a IEEE754 64 bits
+
+Integrantes (ordem alfabética):
+Murilo Chandelier Pedrazzani - https://github.com/MuriloPedrazzani
+Ricardo Ryu Magalhães Makino - https://github.com/ryumakino
+Ricardo Vinicius Moreira Vianna - https://github.com/ricaprof
+
+Grupo no Canvas: RA1 8
+Disciplina: Construção de Interpretadores
+Professor: Frank Alcantara
+
+"""
+
+OPERADORES_SIMPLES = {"+", "-", "*", "/", "%", "^"}
+
+OPERADORES_COMPOSTOS = {"//"} 
+
+PREFIXOS_OPERADORES = {op[0] for op in OPERADORES_SIMPLES.union(OPERADORES_COMPOSTOS)} 
+
+PARENTESES = {"(", ")"}
+
+def erro(msg, linha, pos):
+
+    raise ValueError(f"Erro léxico na posição {pos}: {msg}\n{linha}")
+
+def checar_delimitador(linha, i):
+
+    if i < len(linha):
+        c = linha[i]
+        if not (c.isspace() or c in PARENTESES):
+            erro("Falta de espaçamento ou token inválido colado (Boundary Error)", linha, i)
+
 def estadoNumero(linha, i):
+
     numero = ""
     tem_ponto = False
-    digitos_antes = 0
-    digitos_depois = 0
+    tem_digito = False
 
-    # percorre os caracteres enquanto fizerem parte do numero
+    if linha[i] == "-":
+        numero += "-"
+        i += 1
+
     while i < len(linha):
-        char = linha[i]
+        c = linha[i]
 
-        if char.isdigit():
-            numero += char
-            if not tem_ponto:
-                digitos_antes += 1
-            else:
-                digitos_depois += 1
+        if c.isdigit():
+            numero += c
+            tem_digito = True
             i += 1
-            continue
 
-        if char == ".":
+        elif c == ".":
+
             if tem_ponto:
-                raise ValueError("Número malformado")
+                erro("Número malformado (múltiplos pontos decimais)", linha, i)
+
             tem_ponto = True
-            numero += char
+            numero += c
             i += 1
-            continue
 
-        break
+        else:
+            break
 
-    # valida numeros reais garantindo digitos antes e depois do ponto
-    if tem_ponto and (digitos_antes == 0 or digitos_depois == 0):
-        raise ValueError("Número real inválido")
+    # Validações finais da formação do numero
+    if not tem_digito:
+        erro("Número inválido (sem dígitos)", linha, i)
+
+    if numero.endswith("."):
+        erro("Número malformado (não pode terminar com ponto)", linha, i)
+
+    if numero.startswith(".") or numero.startswith("-."):
+        erro("Número malformado (não pode iniciar com ponto)", linha, i)
+
+    # Verifica se há delimitador correto após o numero
+    checar_delimitador(linha, i)
 
     return numero, i
 
-
 def estadoPalavra(linha, i):
+
+    inicio = i
     palavra = ""
 
     while i < len(linha) and linha[i].isalpha():
         palavra += linha[i]
         i += 1
 
-    # verifica se está em maiusculo
+    # Garante padrão da linguagem
     if not palavra.isupper():
-        raise ValueError(f"Variável/Comando inválido (deve ser maiúsculo): {palavra}")
+        erro("Variáveis e comandos (RES/MEM) devem conter apenas letras maiúsculas", linha, inicio)
+
+    checar_delimitador(linha, i)
 
     return palavra, i
 
-
-# Identifica operadores matematicos da linguagem
 def estadoOperador(linha, i):
-    char = linha[i]
 
-    if char == "/" and i + 1 < len(linha) and linha[i + 1] == "/":
-        return "//", i + 2
+    # Operador composto
+    if linha[i:i+2] == "//":
+        i += 2
+        token = "//"
 
-    if char in "+-*/%^":
-        return char, i + 1
+    # Operadores simples
+    elif linha[i] in OPERADORES_SIMPLES:
+        token = linha[i]
+        i += 1
 
-    raise ValueError(f"Operador inválido: {char}")
+    else:
+        erro("Operador inválido ou caractere desconhecido", linha, i)
 
+    checar_delimitador(linha, i)
 
-# Apenas retorna o parentese encontrado e avança a leitura
+    return token, i
+
 def estadoParenteses(linha, i):
+
     return linha[i], i + 1
 
+def validarParenteses(tokens, linha):
 
-def validarParenteses(tokens):
-    stack = []
+    count = 0
 
     for t in tokens:
+
         if t == "(":
-            stack.append(t)
+            count += 1
+
         elif t == ")":
-            if not stack:
-                raise ValueError("Parênteses desbalanceados")
-            stack.pop()
+            count -= 1
 
-    if stack:
-        raise ValueError("Parênteses desbalanceados")
+        if count < 0:
+            raise ValueError(f"Erro: Parênteses fechado sem ter sido aberto.\n{linha}")
 
+    if count != 0:
+        raise ValueError(f"Erro: Parênteses abertos não foram fechados.\n{linha}")
 
-
-# Função principal do lexer
 def parseExpressao(linha):
+
     tokens = []
     i = 0
 
     while i < len(linha):
-        char = linha[i]
 
-        if char.isspace():
+        c = linha[i]
+
+        if c.isspace():
             i += 1
             continue
 
-        if char in "()":
+        # Reconhecimento de parenteses
+        if c in PARENTESES:
             token, i = estadoParenteses(linha, i)
             tokens.append(token)
             continue
 
-        if char.isdigit():
+        # Reconhecimento de numeros
+        if c.isdigit() or (c == "-" and i + 1 < len(linha) and (linha[i+1].isdigit() or linha[i+1] == ".")):
             token, i = estadoNumero(linha, i)
             tokens.append(token)
             continue
 
-        if char.isalpha():
+        # Reconhecimento de palavras
+        if c.isalpha():
             token, i = estadoPalavra(linha, i)
             tokens.append(token)
             continue
 
-        if char in "+-*/%^":
+        # Reconhecimento de operadores
+        if c in PREFIXOS_OPERADORES:
             token, i = estadoOperador(linha, i)
             tokens.append(token)
             continue
 
-        raise ValueError(f"Caractere inválido: {char}")
+        # Caso nenhum token seja reconhecido
+        erro("Caractere inválido na linguagem", linha, i)
 
-    validarParenteses(tokens)
+    validarParenteses(tokens, linha)
 
     return tokens

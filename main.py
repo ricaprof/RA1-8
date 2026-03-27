@@ -1,104 +1,95 @@
 import sys
+import json
+
 from lexer import parseExpressao
 from executor import executarExpressao
-from assembly import gerarAssembly
+from assembly import gerarAssembly, salvarAssembly
 
-def lerArquivo(nomeArquivo):
+
+def salvar_tokens(tokens_por_linha, nome_arquivo="tokens.txt"):
+
+    with open(nome_arquivo, "w", encoding="utf-8") as f:
+        json.dump(tokens_por_linha, f, indent=4, ensure_ascii=False)
+
+def processar_arquivo(nome_arquivo):
+
+    historico_resultados = []   
+    tokens_por_linha = []       
+    memoria_local = {}         
+
     try:
-        with open(nomeArquivo, "r") as arquivo:
-            return arquivo.readlines()
+        with open(nome_arquivo, "r", encoding="utf-8") as f:
+            linhas = f.readlines()
     except FileNotFoundError:
-        print(f"Erro: O arquivo '{nomeArquivo}' não foi encontrado.")
+        print(f"Erro: O arquivo '{nome_arquivo}' não foi encontrado.")
         sys.exit(1)
 
+    print(f"\n=== PROCESSANDO ARQUIVO: {nome_arquivo} ===\n")
 
-def salvarTokens(tokens):
-    try:
-        with open("tokens.txt", "w") as arquivo:
-            for token in tokens:
-                arquivo.write(str(token) + "\n")
-    except Exception as e:
-        print(f"Erro ao salvar tokens: {e}")
+    # Percorre todas as linhas do arquivo
+    for numero_linha, linha in enumerate(linhas, start=1):
+
+        linha = linha.strip()
+
+        # Ignora linhas completamente vazias
+        if not linha:
+            continue
+
+        print(f"Linha {numero_linha}: {linha}")
+
+        try:
+
+            tokens = parseExpressao(linha)
+
+            # Usa o executor passando o historico e a memoria atual
+            resultado = executarExpressao(tokens, historico_resultados, memoria_local)
+
+            # Guarda o resultado no historico
+            historico_resultados.append(resultado)
+
+            # Guarda os tokens gerados
+            tokens_por_linha.append(tokens)
+
+            print(f"  Tokens: {tokens}")
+            print(f"  Resultado: {resultado:.2f}\n")
+
+        except Exception as e:
+            # Caso ocorra erro na linha registramos o erro
+            print(f" Erro: {e}\n")
+
+            historico_resultados.append(0.0)
+
+            tokens_por_linha.append([])
+
+    # Salva os tokens em formato estruturado
+    salvar_tokens(tokens_por_linha)
+    print("Tokens estruturados salvos em 'tokens.txt'")
 
 
-def salvarAssembly(codigo):
-    try:
-        with open("program.s", "w") as arquivo:
-            if isinstance(codigo, list):
-                arquivo.write("\n".join(codigo) + "\n")
-            else:
-                arquivo.write(str(codigo) + "\n")
-    except Exception as e:
-        print(f"Erro ao salvar assembly: {e}")
+    if tokens_por_linha:
+        try:
+            codigo_assembly = gerarAssembly(tokens_por_linha)
+            salvarAssembly(codigo_assembly)
 
+            print("Assembly gerado com sucesso em 'program.s'")
 
-def exibirResultados(resultados):
-    if not resultados:
-        print("\nNenhuma expressão válida foi executada.")
-        return
+        except Exception as e:
+            print(f"Erro ao gerar o Assembly: {e}")
+    else:
+        print("Nenhum token para gerar Assembly.")
 
-    print("\nResultados:")
-    for linha, resultado in resultados:
-        print(f"Linha {linha}: {resultado}")
-
+    print("\n=== FIM DA EXECUÇÃO ===")
 
 def main():
 
-    # verifica se o usuario passou o arquivo de entrada
     if len(sys.argv) < 2:
-        print("Uso: python main.py teste1.txt")
+        print("Uso correto: python main.py <nome_do_arquivo.txt>")
         sys.exit(1)
 
-    nomeArquivo = sys.argv[1]
+    # Nome do arquivo passado pelo usuário
+    nome_arquivo = sys.argv[1]
 
-    linhas = lerArquivo(nomeArquivo)
-
-    resultados = []
-    linha_atual = 1
-
-    # guarda tokens da ultima execução válida
-    tokensUltimaExecucao = []
-
-    # guarda os tokens de todas as linhas validas
-    linhas_tokens = []
-
-    for linha in linhas:
-        linha = linha.strip()
-
-        if not linha:
-            linha_atual += 1
-            continue
-
-        try:
-            tokens = parseExpressao(linha)
-
-            resultado = executarExpressao(tokens)
-
-            resultados.append((linha_atual, resultado))
-
-            # guarda tokens para geração de arquivos
-            tokensUltimaExecucao = tokens
-            linhas_tokens.append(tokens)
-
-        except Exception as e:
-            # caso ocorra erro em alguma linha
-            print(f"Erro na linha {linha_atual}: {e}")
-
-        linha_atual += 1
-
-    # salva os tokens da ultima expressão válida
-    if tokensUltimaExecucao:
-        salvarTokens(tokensUltimaExecucao)
-
-    # gera o assembly apenas se houver expressões validas
-    if linhas_tokens:
-        codigoAssembly = gerarAssembly(linhas_tokens)
-
-        if codigoAssembly:
-            salvarAssembly(codigoAssembly)
-
-    # mostra os resultados no terminal
-    exibirResultados(resultados)
+    processar_arquivo(nome_arquivo)
 
 if __name__ == "__main__":
     main()
